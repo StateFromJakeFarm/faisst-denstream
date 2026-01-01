@@ -27,7 +27,7 @@ class DenStream:
         self.pmc = []
         self.omc = []
         self.tc = 1
-        self.Tp = np.ceil(1/lamb * np.log(beta * mu / (beta * mu - 1)))
+        self.Tp = int(np.ceil(1/lamb * np.log(beta * mu / (beta * mu - 1))))
         self.init_points = None
         self.initialized = False
 
@@ -92,7 +92,7 @@ class DenStream:
             logger.debug(f"Added new point to outlier-micro-cluster #{omc_idx}")
             self.omc[omc_idx].add_points(point, self.tc)
 
-            if self.omc[omc_idx].weight > self.beta * self.mu:
+            if self.omc[omc_idx].weight >= self.beta * self.mu:
                 self.pmc.append(self.omc[omc_idx])
                 self.omc.pop(omc_idx)
 
@@ -110,7 +110,33 @@ class DenStream:
         if self.initialized:
             # Everything is all set, so run normal DenStream algo
             for point in X:
+                # Add this point to a p or o-micro-cluster
                 self._merge_new_point(point, self.tc)
+
+                if self.tc % self.Tp == 0:
+                    logger.debug(f"Removing potential and outlier micro-clusters whose weights have fallen too far")
+
+                    # Remove any p-micro-clusters whose weights have fallen below the threshold
+                    to_delete = []
+                    for idx, pmc in enumerate(self.pmc):
+                        if pmc.weight < self.beta * self.mu:
+                            to_delete.append(idx)
+
+                    logger.debug(f"\t{len(to_delete)}/{len(self.pmc)} potential-micro-clusters were deleted")
+
+                    for idx in to_delete:
+                        del self.pmc[idx]
+
+                    # Remove any o-micro-clusters whose weights have fallen below their custom thresholds
+                    to_delete = []
+                    for idx, omc in enumerate(self.omc):
+                        if omc.weight < omc.get_xi(self.tc, self.Tp):
+                            to_delete.append(idx)
+
+                    logger.debug(f"\t{len(to_delete)}/{len(self.omc)} outlier-micro-clusters were deleted")
+
+                    for idx in to_delete:
+                        del self.omc[idx]
 
                 # Move forward in time
                 self.tc += 1
@@ -147,7 +173,7 @@ class DenStream:
                 # Exclude points that are already part of other p-micro-clusters
                 inds = list(set(inds) - assigned)
 
-                if len(inds) > self.beta * self.mu:
+                if len(inds) >= self.beta * self.mu:
                     # This point and its epsilon neighborhood are heavy enough to be a p-micro-cluster
                     new_pmc = MicroCluster(self.init_points[inds], 1, self.lamb)
                     self.pmc.append(new_pmc)
@@ -158,6 +184,7 @@ class DenStream:
             logger.debug(f"Found {len(self.pmc)} potential-micro-clusters after initialization")
             if len(self.pmc) == 0:
                 raise ValueError("Did not find any potential-micro-clusters during initialization! Product of beta and mu is likely too large")
+
             logger.debug(f"{self.n_init_points - len(assigned)}/{self.n_init_points} points did not get assigned to a potential-micro-cluster")
 
             # Now that we've initialized, calling this function again will just run the regular DenStream algo
@@ -166,10 +193,12 @@ class DenStream:
 
 
 if __name__ == "__main__":
+    logger.level("INFO")
+
     # Create model
     lamb = 0.01
-    beta = 0.5
-    mu = 2.5
+    beta = 0.75
+    mu = 4
     epsilon = 0.04
     n_init_points = 200
     stream_speed = 10
@@ -177,7 +206,7 @@ if __name__ == "__main__":
     model = DenStream(lamb, beta, mu, epsilon, n_init_points, stream_speed)
 
     # Create points
-    X = np.random.normal(loc=0, scale=1, size=(5000, 3))
+    X = np.random.normal(loc=0, scale=1, size=(10000, 3))
 
     # Test fit
     model.partial_fit(X)

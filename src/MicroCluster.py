@@ -79,3 +79,9 @@ class MicroCluster:
 
         return np.sqrt(diff_of_faded_norms) if diff_of_faded_norms > 0 else 0
 
+
+    def get_xi(self, tc, Tp):
+        return (
+            (2**(-self.lamb * (tc - self.t0 + Tp)) - 1)
+            / (2**(-self.lamb * Tp) - 1)
+        )
