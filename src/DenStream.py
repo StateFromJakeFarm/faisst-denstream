@@ -42,6 +42,66 @@ class DenStream:
         )
 
 
+    def _merge_new_point(
+            self,
+            point,
+            current_time):
+
+        # Find out which p-micro-cluster center the new point is closest to
+        pmc_centers = np.vstack([p.center for p in self.pmc])
+        index = faiss.IndexFlatL2(pmc_centers.shape[1])
+        index.add(pmc_centers)
+
+        if len(point.shape) == 1:
+            # Needs to be 2-dim
+            point = np.array([point])
+
+        dist, pmc_idx = index.search(point, 1)
+        dist = dist[0][0]
+        pmc_idx = pmc_idx[0][0]
+
+        # Get would-be radius if this point is added to its nearest p-micro-cluster
+        would_be_radius = self.pmc[pmc_idx]._get_radius_if_new_point_added(point)
+        if would_be_radius <= self.epsilon:
+            # Found a home!
+            logger.debug(f"Added new point to potential-micro-cluster #{pmc_idx}")
+            self.pmc[pmc_idx].add_points(point, self.tc)
+
+            return
+
+        # We could not find a p-micro-cluster to accept the new point, so now we need
+        # to check the o-micro-clusters
+        if len(self.omc) == 0:
+            # This point will become our first o-micro-cluster
+            logger.debug(f"Created our first outlier-micro-cluster")
+            self.omc.append(MicroCluster(point, self.tc, self.lamb))
+
+            return
+
+        omc_centers = np.vstack([o.center for o in self.omc])
+        index = faiss.IndexFlatL2(omc_centers.shape[1])
+        index.add(omc_centers)
+
+        dist, omc_idx = index.search(point, 1)
+        dist = dist[0][0]
+        omc_idx = omc_idx[0][0]
+
+        would_be_radius = self.omc[omc_idx]._get_radius_if_new_point_added(point)
+        if would_be_radius <= self.epsilon:
+            # Found a fixer-upper home!
+            logger.debug(f"Added new point to outlier-micro-cluster #{omc_idx}")
+            self.omc[omc_idx].add_points(point, self.tc)
+
+            if self.omc[omc_idx].weight > self.beta * self.mu:
+                self.pmc.append(self.omc[omc_idx])
+                self.omc.pop(omc_idx)
+
+                logger.debug(
+                    f"Outlier-micro-cluster #{omc_idx} has been upgraded to a potential-micro-cluster."
+                    f" There are now {len(self.pmc)} p-micro-clusters and {len(self.omc)} o-micro-clusters."
+                )
+
+
     @logger.catch
     def partial_fit(
             self,
@@ -49,7 +109,12 @@ class DenStream:
 
         if self.initialized:
             # Everything is all set, so run normal DenStream algo
-            pass
+            for point in X:
+                self._merge_new_point(point, self.tc)
+
+                # Move forward in time
+                self.tc += 1
+
         elif self.init_points is None:
             # This is the first batch of points we've seen
             self.init_points = X[:self.n_init_points]
@@ -79,7 +144,10 @@ class DenStream:
                 query = np.array([self.init_points[point_idx]])
                 lims, dists, inds = index.range_search(query, epsilon)
 
-                if len(inds) >= self.beta * self.mu:
+                # Exclude points that are already part of other p-micro-clusters
+                inds = list(set(inds) - assigned)
+
+                if len(inds) > self.beta * self.mu:
                     # This point and its epsilon neighborhood are heavy enough to be a p-micro-cluster
                     new_pmc = MicroCluster(self.init_points[inds], 1, self.lamb)
                     self.pmc.append(new_pmc)
@@ -88,7 +156,13 @@ class DenStream:
                     assigned.update(inds)
 
             logger.debug(f"Found {len(self.pmc)} potential-micro-clusters after initialization")
+            if len(self.pmc) == 0:
+                raise ValueError("Did not find any potential-micro-clusters during initialization! Product of beta and mu is likely too large")
             logger.debug(f"{self.n_init_points - len(assigned)}/{self.n_init_points} points did not get assigned to a potential-micro-cluster")
+
+            # Now that we've initialized, calling this function again will just run the regular DenStream algo
+            self.initialized = True
+            self.partial_fit(X)
 
 
 if __name__ == "__main__":
@@ -103,7 +177,7 @@ if __name__ == "__main__":
     model = DenStream(lamb, beta, mu, epsilon, n_init_points, stream_speed)
 
     # Create points
-    X = np.random.random((500, 3)).astype('float32')
+    X = np.random.normal(loc=0, scale=1, size=(5000, 3))
 
     # Test fit
     model.partial_fit(X)
