@@ -1,8 +1,9 @@
 import numpy as np
 import faiss
 
-from MicroCluster import MicroCluster
 from loguru import logger
+from MicroCluster import MicroCluster
+from collections import Counter
 
 # This is sys.maxsize on my machine
 MAX_POINT_ID = 9223372036854775807
@@ -36,7 +37,8 @@ class DenStream:
         self.Tp = int(np.ceil(1/lamb * np.log(beta * mu / (beta * mu - 1))))
         self.init_points = None
         self.initialized = False
-        self.next_point_id = n_init_points
+        self.next_point_id = n_init_points # because we only use this variable after initialization
+        self.next_cluster_id = 0
 
         logger.debug(
             "Model Params:"
@@ -239,16 +241,60 @@ class DenStream:
 
             # Exclude points that are already part of other clusters
             inds = list(set(inds) - assigned)
+            assigned.update(inds)
 
             # Add all points from each c-micro-cluster into bucket
-            cluster = []
+            cluster_points = []
+            last_cluster_ids = []
             for idx in inds:
                 cmc = cmcs[idx]
-                cluster.extend(zip(cmc.point_ids, cmc.points.tolist()))
+                cluster_points.extend(zip(cmc.point_ids, cmc.points.tolist()))
+                last_cluster_ids.append(cmc.last_cluster_id)
 
-            clusters.append(cluster)
+            # The micro-clusters of a cluster could split apart to become part of another cluster
+            # over time and maybe even re-merge together later on. In order to provide some consistency
+            # in the cluster IDs, we will hold a vote.
+            last_cluster_id_counts = Counter(last_cluster_ids)
+            
+            # most_common() is giving me an error?
+            most_common_last_cluster_id = -1
+            max_count = 0
+            for last_cluster_id, num_pmc in last_cluster_id_counts.items():
+                if num_pmc > max_count:
+                    most_common_last_cluster_id = last_cluster_id
+                    max_count = num_pmc
 
-        logger.debug(
+            if most_common_last_cluster_id == -1:
+                # Because majority of core-micro-clusters in this cluster have never been part of a cluster
+                # before, this will be a new cluster.
+                cluster_id = self.next_cluster_id
+                self.next_cluster_id += 1
+            else:
+                # Use the most common cluster ID from last time
+                cluster_id = most_common_last_cluster_id
+
+            for idx in inds:
+                cmc = cmcs[idx]
+                cmc.last_cluster_id = cluster_id
+
+            clusters.append((cluster_id, cluster_points))
+
+        # TODO: address this!
+        # There is an edge case where cluster A gets split up into two clusters and cluster A's core-micro-clusters
+        # form the majority in both of those new clusters. In this case, the largest of the duplicates will maintain
+        # cluster A's ID, and other clusters will get new IDs.
+        #cluster_id_uses = {}
+        #for idx, (cluster_id, _) in enumerate(clusters):
+        #    if cluster_id in cluster_id_uses:
+        #        cluster_id_uses[cluster_id].append(idx)
+        #    else:
+        #        cluster_id_uses[cluster_id] = [idx]
+
+        #print(cluster_id_uses)
+
+        # Update last cluster assignments for each core-micro-cluster
+
+        logger.info(
             "Clustering Request:"
             f"\n\toutlier-micro-clusters:   {len(self.omc)}"
             f"\n\tpotential-micro-clusters: {len(self.pmc)}"
@@ -260,27 +306,33 @@ class DenStream:
 
 
 if __name__ == "__main__":
-    # Create points
-    X = np.random.normal(size=(3000, 3))
+    from random import randint
+    from sys import stderr
+
+    logger.remove()
+    logger.add(stderr, level="INFO")
+
+    test_dataset_size = 1000
+    test_dataset_dim = 3
+    num_test_datasets = 1000
 
     # Create model
     lamb = 0.05
-    beta = 0.75
-    mu = 20
+    beta = 0.5
+    mu = 10
     epsilon = 0.5
-    n_init_points = int(X.shape[0] * 0.25)
+    n_init_points = int(test_dataset_size * 0.25)
     stream_speed = 10
 
     model = DenStream(lamb, beta, mu, epsilon, n_init_points, stream_speed)
 
-    # Test fit
-    model.partial_fit(X)
+    for i in range(num_test_datasets):
+        X = np.random.normal(loc=randint(0, 10), scale=randint(1, 5), size=(test_dataset_size, test_dataset_dim))
+        model.partial_fit(X)
 
-    # Get full clusters
-    t = 0
-    for cluster in model._get_clusters():
-        print(cluster)
-        t += len(cluster)
-        print(len(cluster))
+        # Get full clusters
+        t = 0
+        for cluster_id, points in model._get_clusters():
+            t += len(points)
 
-    print(t, X.shape[0], t/X.shape[0])
+        print(f"{i+1}: {t}/{test_dataset_size * (i+1)} points belong to clusters")

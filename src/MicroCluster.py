@@ -14,7 +14,9 @@ class MicroCluster:
         self.point_ids = point_ids
         self.lamb = lamb
         self.t0 = creation_time
+        self.last_cluster_id = -1
 
+        # Initialize these values with the first point or points we're given
         self._update_weight()
         self._update_center()
         self._update_radius()
