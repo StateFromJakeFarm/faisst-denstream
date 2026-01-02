@@ -3,12 +3,29 @@
 ### A performant implementation of the DenStream algorithm that relies heavily on [FAISS](https://github.com/facebookresearch/faiss).
 
 ## Installation
-`pip install git+https://github.com/StateFromJakeFarm/faisst-denstream.git`
+Without GPU acceleration:
+`pip install faisst-denstream`
+
+With GPU acceleration:
+`pip install faisst-denstream[gpu]`
 
 
 ## Basic Usage
 ```python
-from faisst_denstream import DenStream
+import numpy as np
+
+from faisst_denstream.DenStream import DenStream
+from random import randint
+from sys import stderr
+from loguru import logger
+
+
+logger.remove()
+logger.add(stderr, level="INFO")
+
+test_dataset_size = 10000
+test_dataset_dim = 3
+num_test_datasets = 10
 
 # Create model
 lamb = 0.05
@@ -26,9 +43,7 @@ X2 = np.random.normal(loc=randint(0, 10), scale=randint(1, 5), size=(10_000, 3))
 
 # Fit once and get points in each cluster
 model.partial_fit(X1)
-model.get_clusters()
 
 # Fit again and get points in each cluster
 model.partial_fit(X2)
-model.get_clusters()
 ```

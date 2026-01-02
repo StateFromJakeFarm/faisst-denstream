@@ -5,6 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "faisst-denstream"
 version = "0.0.1"
+dependencies = [
+    "numpy",
+    "loguru",
+    "faiss-cpu",
+]
 authors = [
   { name="Jake Hansen", email="jakehansendev@proton.me" },
 ]
@@ -17,11 +22,9 @@ classifiers = [
 ]
 license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
-dependencies = [
-    "numpy",
-    "faiss-cpu",
-    "loguru"
-]
+
+[project.optional-dependencies]
+gpu = ["faiss-gpu"]
 
 [project.urls]
 Homepage = "https://github.com/StateFromJakeFarm/faisst-denstream"
