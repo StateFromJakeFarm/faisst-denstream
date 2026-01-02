@@ -6,6 +6,7 @@ from loguru import logger
 
 
 class DenStream:
+    @logger.catch
     def __init__(
             self,
             lamb, # lambda is a keyword
@@ -37,6 +38,7 @@ class DenStream:
             f"\n\tbeta          = {self.beta}"
             f"\n\tmu            = {self.mu}"
             f"\n\tepsilon       = {self.epsilon}"
+            f"\n\tTp            = {self.Tp}"
             f"\n\tn_init_points = {self.n_init_points}"
             f"\n\tstream_speed  = {self.stream_speed}"
         )
@@ -192,21 +194,60 @@ class DenStream:
             self.partial_fit(X)
 
 
+    def _get_clusters(self):
+        # Find all p-micro-clusters that qualify as c-micro-clusters
+        cmcs = [p for p in self.pmc if p.weight >= self.mu]
+        cmc_centers = np.vstack([c.center for c in cmcs])
+
+        # Find groups of c-micro-clusters 
+        index = faiss.IndexFlatL2(cmc_centers.shape[1])
+        index.add(cmc_centers)
+
+        clusters = []
+        assigned = set()
+        for cmc_idx, cmc_center in enumerate(cmc_centers):
+            if cmc_idx in assigned:
+                continue
+
+            # Find centers 2 or fewer epsilons apart (radii of micro-clusters touching)
+            query = np.array([cmc_center])
+            lims, dists, inds = index.range_search(query, 2 * self.epsilon)
+
+            # Exclude points that are already part of other clusters
+            inds = list(set(inds) - assigned)
+
+            # Add all points from each c-micro-cluster into bucket
+            cluster = []
+            for idx in inds:
+                cmc = cmcs[idx]
+                cluster.extend(cmc.points.tolist())
+
+            clusters.append(cluster)
+
+        return clusters
+
+
 if __name__ == "__main__":
-    logger.level("INFO")
+    # Create points
+    X = np.random.uniform(low=0, high=10, size=(1000, 3))
 
     # Create model
     lamb = 0.01
     beta = 0.75
-    mu = 4
-    epsilon = 0.04
-    n_init_points = 200
+    mu = 5
+    epsilon = 1
+    n_init_points = int(X.shape[0] * 0.25)
     stream_speed = 10
 
     model = DenStream(lamb, beta, mu, epsilon, n_init_points, stream_speed)
 
-    # Create points
-    X = np.random.normal(loc=0, scale=1, size=(10000, 3))
-
     # Test fit
     model.partial_fit(X)
+
+    # Get full clusters
+    t = 0
+    for cluster in model._get_clusters():
+        t += len(cluster)
+        print(len(cluster))
+
+    print(t, X.shape[0], t/X.shape[0])
