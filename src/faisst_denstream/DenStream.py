@@ -2,24 +2,26 @@ import numpy as np
 import faiss
 
 from loguru import logger
-from faisst_denstream.MicroCluster import MicroCluster
 from collections import Counter
+from sklearn.base import BaseEstimator
+from faisst_denstream.MicroCluster import MicroCluster
+
 
 # This is sys.maxsize on my machine
 MAX_POINT_ID = 9223372036854775807
 MAX_CLUSTER_ID = 9223372036854775807 
 
 
-class DenStream:
+class DenStream(BaseEstimator):
     @logger.catch(reraise=True)
     def __init__(
             self,
-            lamb, # lambda is a keyword
-            beta,
-            mu,
-            epsilon,
-            n_init_points,
-            stream_speed):
+            lamb=0.05,
+            beta=0.7,
+            mu=10,
+            epsilon=0.3,
+            n_init_points=300,
+            stream_speed=10):
 
         # Hyperparameters
         self.lamb = lamb
@@ -37,7 +39,7 @@ class DenStream:
         self.Tp = int(np.ceil(1/lamb * np.log(beta * mu / (beta * mu - 1))))
         self.init_points = None
         self.initialized = False
-        self.next_point_id = n_init_points # because we only use this variable after initialization
+        self.next_point_id = 0
         self.next_cluster_id = 0
 
         logger.debug(
@@ -117,58 +119,65 @@ class DenStream:
             logger.debug(f"Creating new outlier-micro-cluster. There are now {len(self.omc)} outlier-micro-clusters.")
 
 
-    @logger.catch(reraise=True)
-    def partial_fit(
+    def _DenStream(
             self,
             X):
 
+        for point in X:
+            # Add this point to a p or o-micro-cluster
+            self._merge_new_point(point, self.next_point_id, self.tc)
+
+            if self.tc % self.Tp == 0:
+                logger.debug(f"Removing potential and outlier micro-clusters whose weights have fallen too far")
+
+                # Remove any p-micro-clusters whose weights have fallen below the threshold
+                to_delete = []
+                for idx, pmc in enumerate(self.pmc):
+                    if pmc.weight < self.beta * self.mu:
+                        to_delete.append(idx)
+
+                logger.debug(f"\t{len(to_delete)}/{len(self.pmc)} potential-micro-clusters were deleted")
+
+                for idx in reversed(to_delete):
+                    del self.pmc[idx]
+
+                # Remove any o-micro-clusters whose weights have fallen below their custom thresholds
+                to_delete = []
+                for idx, omc in enumerate(self.omc):
+                    if omc.weight < omc.get_xi(self.tc, self.Tp):
+                        to_delete.append(idx)
+
+                logger.debug(f"\t{len(to_delete)}/{len(self.omc)} outlier-micro-clusters were deleted")
+
+                for idx in reversed(to_delete):
+                    del self.omc[idx]
+
+            # Increment the stream speed tracker
+            self.speed_tracker += 1
+            if self.speed_tracker == self.stream_speed:
+                # Move forward in time
+                self.tc += 1
+                self.speed_tracker = 1
+
+            # Because this is an online/streaming clustering algorithm, it could be fed lots of data over a long
+            # period of time if used in production. Point IDs will loop around after the MAX_POINT_ID-th point
+            # is fed to the algorithm. This means that we will only be able to retrieve the cluster assignments
+            # for the most recent MAX_POINT_ID points we've fit.
+            if self.next_point_id == MAX_POINT_ID - 1:
+                self.next_point_id = 0
+            else:
+                self.next_point_id += 1
+
+
+    @logger.catch(reraise=True)
+    def partial_fit(
+            self,
+            X,
+            y=None):
+
         if self.initialized:
             # Everything is all set, so run normal DenStream algo
-            for point in X:
-                # Add this point to a p or o-micro-cluster
-                self._merge_new_point(point, self.next_point_id, self.tc)
-
-                if self.tc % self.Tp == 0:
-                    logger.debug(f"Removing potential and outlier micro-clusters whose weights have fallen too far")
-
-                    # Remove any p-micro-clusters whose weights have fallen below the threshold
-                    to_delete = []
-                    for idx, pmc in enumerate(self.pmc):
-                        if pmc.weight < self.beta * self.mu:
-                            to_delete.append(idx)
-
-                    logger.debug(f"\t{len(to_delete)}/{len(self.pmc)} potential-micro-clusters were deleted")
-
-                    for idx in reversed(to_delete):
-                        del self.pmc[idx]
-
-                    # Remove any o-micro-clusters whose weights have fallen below their custom thresholds
-                    to_delete = []
-                    for idx, omc in enumerate(self.omc):
-                        if omc.weight < omc.get_xi(self.tc, self.Tp):
-                            to_delete.append(idx)
-
-                    logger.debug(f"\t{len(to_delete)}/{len(self.omc)} outlier-micro-clusters were deleted")
-
-                    for idx in reversed(to_delete):
-                        del self.omc[idx]
-
-                # Increment the stream speed tracker
-                self.speed_tracker += 1
-                if self.speed_tracker == self.stream_speed:
-                    # Move forward in time
-                    self.tc += 1
-                    self.speed_tracker = 1
-
-                # Because this is an online/streaming clustering algorithm, it could be fed lots of data over a long
-                # period of time if used in production. Point IDs will loop around after the MAX_POINT_ID-th point
-                # is fed to the algorithm. This means that we will only be able to retrieve the cluster assignments
-                # for the most recent MAX_POINT_ID points we've fit.
-                if self.next_point_id == MAX_POINT_ID - 1:
-                    self.next_point_id = 0
-                else:
-                    self.next_point_id += 1
-
+            self._DenStream(X)
         elif self.init_points is None:
             # This is the first batch of points we've seen
             self.init_points = X[:self.n_init_points]
@@ -215,9 +224,25 @@ class DenStream:
 
             logger.debug(f"{self.n_init_points - len(assigned)}/{self.n_init_points} points did not get assigned to a potential-micro-cluster")
 
-            # Now that we've initialized, calling this function again will just run the regular DenStream algo
+        if not self.initialized and self.init_points.shape[0] == self.n_init_points:
             self.initialized = True
-            self.partial_fit(X)
+            self.next_point_id = self.n_init_points
+
+        if self.initialized and X.shape[0] > 0:
+            # There are still some points left and we've finished initializing, so we can run this on the remaining points
+            self._DenStream(X)
+
+        return self
+
+
+    def fit(
+            self,
+            X,
+            y=None):
+
+        self.partial_fit(X, y)
+
+        return self
 
 
     def _get_clusters(self):
@@ -305,6 +330,37 @@ class DenStream:
         return clusters
 
 
+    @logger.catch(reraise=True)
+    def fit_predict(
+            self,
+            X,
+            y=None):
+
+        # These will end up being the point IDs
+        starting_point_id = self.next_point_id
+        point_ids = set(range(starting_point_id, starting_point_id + X.shape[0]))
+
+        # Fit new points
+        self.partial_fit(X)
+
+        if not self.initialized:
+            raise ValueError(f"Model has not yet consumed enough points to finish initializing ({self.init_points.shape[0]}/{self.n_init_points})!")
+
+        # TODO: make this more efficient
+        # Check each cluster for points in X
+        clusters = self._get_clusters()
+        assignments = [-1 for _ in range(X.shape[0])]
+        for cluster_id, points in clusters:
+            this_cluster_point_ids = set([i for i, p in points])
+
+            target_points_in_this_cluster = this_cluster_point_ids.intersection(point_ids)
+
+            for point_id in target_points_in_this_cluster:
+                assignments[point_id - starting_point_id] = cluster_id
+
+        return np.array(assignments)
+
+
 if __name__ == "__main__":
     from random import randint
     from sys import stderr
@@ -314,25 +370,22 @@ if __name__ == "__main__":
 
     test_dataset_size = 1000
     test_dataset_dim = 3
-    num_test_datasets = 1000
+    num_test_datasets = 10
 
     # Create model
     lamb = 0.05
     beta = 0.5
-    mu = 10
-    epsilon = 0.5
+    mu = 5
+    epsilon = 0.75
     n_init_points = int(test_dataset_size * 0.25)
-    stream_speed = 10
+    stream_speed = 1
 
     model = DenStream(lamb, beta, mu, epsilon, n_init_points, stream_speed)
+    print(model.get_params())
 
     for i in range(num_test_datasets):
-        X = np.random.normal(loc=randint(0, 10), scale=randint(1, 5), size=(test_dataset_size, test_dataset_dim))
-        model.partial_fit(X)
+        X = np.random.normal(randint(0, 10), randint(1, 10), size=(test_dataset_size, test_dataset_dim))
 
-        # Get full clusters
-        t = 0
-        for cluster_id, points in model._get_clusters():
-            t += len(points)
-
-        print(f"{i+1}: {t}/{test_dataset_size * (i+1)} points belong to clusters")
+        preds = model.fit_predict(X)
+        num_assigned = np.where(preds != -1)[0].shape[0]
+        print(f"{num_assigned}/{test_dataset_size} ({num_assigned / test_dataset_size * 100:.1f}%) points landed in clusters")
