@@ -5,11 +5,13 @@ class MicroCluster:
     def __init__(
             self,
             points,
+            point_ids,
             creation_time,
             lamb):
 
         self.points = points
         self.point_arrival_times = np.array([creation_time for _ in range(points.shape[0])])
+        self.point_ids = point_ids
         self.lamb = lamb
         self.t0 = creation_time
 
@@ -18,14 +20,16 @@ class MicroCluster:
         self._update_radius()
 
 
-    def add_points(
+    def add_point(
             self,
-            points,
+            point,
+            point_id,
             arrival_time):
 
-        self.points = np.concatenate((self.points, points), axis=0)
-        point_arrival_times = np.array([arrival_time for _ in range(points.shape[0])])
-        self.point_arrival_times = np.concatenate((self.point_arrival_times, point_arrival_times), axis=0)
+        self.points = np.concatenate((self.points, point), axis=0)
+        self.point_ids.append(point_id)
+        point_arrival_time = np.array([arrival_time])
+        self.point_arrival_times = np.concatenate((self.point_arrival_times, point_arrival_time), axis=0)
 
         # Need to keep stats current
         self._update_weight()

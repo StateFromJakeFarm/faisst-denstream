@@ -4,9 +4,13 @@ import faiss
 from MicroCluster import MicroCluster
 from loguru import logger
 
+# This is sys.maxsize on my machine
+MAX_POINT_ID = 9223372036854775807
+MAX_CLUSTER_ID = 9223372036854775807 
+
 
 class DenStream:
-    @logger.catch
+    @logger.catch(reraise=True)
     def __init__(
             self,
             lamb, # lambda is a keyword
@@ -28,9 +32,11 @@ class DenStream:
         self.pmc = []
         self.omc = []
         self.tc = 1
+        self.speed_tracker = 1
         self.Tp = int(np.ceil(1/lamb * np.log(beta * mu / (beta * mu - 1))))
         self.init_points = None
         self.initialized = False
+        self.next_point_id = n_init_points
 
         logger.debug(
             "Model Params:"
@@ -47,6 +53,7 @@ class DenStream:
     def _merge_new_point(
             self,
             point,
+            point_id,
             current_time):
 
         # Find out which p-micro-cluster center the new point is closest to
@@ -67,7 +74,7 @@ class DenStream:
         if would_be_radius <= self.epsilon:
             # Found a home!
             logger.debug(f"Added new point to potential-micro-cluster #{pmc_idx}")
-            self.pmc[pmc_idx].add_points(point, self.tc)
+            self.pmc[pmc_idx].add_point(point, point_id, self.tc)
 
             return
 
@@ -76,7 +83,7 @@ class DenStream:
         if len(self.omc) == 0:
             # This point will become our first o-micro-cluster
             logger.debug(f"Created our first outlier-micro-cluster")
-            self.omc.append(MicroCluster(point, self.tc, self.lamb))
+            self.omc.append(MicroCluster(point, [point_id], self.tc, self.lamb))
 
             return
 
@@ -92,7 +99,7 @@ class DenStream:
         if would_be_radius <= self.epsilon:
             # Found a fixer-upper home!
             logger.debug(f"Added new point to outlier-micro-cluster #{omc_idx}")
-            self.omc[omc_idx].add_points(point, self.tc)
+            self.omc[omc_idx].add_point(point, point_id, self.tc)
 
             if self.omc[omc_idx].weight >= self.beta * self.mu:
                 self.pmc.append(self.omc[omc_idx])
@@ -102,9 +109,13 @@ class DenStream:
                     f"Outlier-micro-cluster #{omc_idx} has been upgraded to a potential-micro-cluster."
                     f" There are now {len(self.pmc)} p-micro-clusters and {len(self.omc)} o-micro-clusters."
                 )
+        else:
+            # This point doesn't fit into any p or o-micro-clusters, so it becomes the start of a new o-micro-cluster
+            self.omc.append(MicroCluster(point, [point_id], self.tc, self.lamb))
+            logger.debug(f"Creating new outlier-micro-cluster. There are now {len(self.omc)} outlier-micro-clusters.")
 
 
-    @logger.catch
+    @logger.catch(reraise=True)
     def partial_fit(
             self,
             X):
@@ -113,7 +124,7 @@ class DenStream:
             # Everything is all set, so run normal DenStream algo
             for point in X:
                 # Add this point to a p or o-micro-cluster
-                self._merge_new_point(point, self.tc)
+                self._merge_new_point(point, self.next_point_id, self.tc)
 
                 if self.tc % self.Tp == 0:
                     logger.debug(f"Removing potential and outlier micro-clusters whose weights have fallen too far")
@@ -126,7 +137,7 @@ class DenStream:
 
                     logger.debug(f"\t{len(to_delete)}/{len(self.pmc)} potential-micro-clusters were deleted")
 
-                    for idx in to_delete:
+                    for idx in reversed(to_delete):
                         del self.pmc[idx]
 
                     # Remove any o-micro-clusters whose weights have fallen below their custom thresholds
@@ -137,11 +148,24 @@ class DenStream:
 
                     logger.debug(f"\t{len(to_delete)}/{len(self.omc)} outlier-micro-clusters were deleted")
 
-                    for idx in to_delete:
+                    for idx in reversed(to_delete):
                         del self.omc[idx]
 
-                # Move forward in time
-                self.tc += 1
+                # Increment the stream speed tracker
+                self.speed_tracker += 1
+                if self.speed_tracker == self.stream_speed:
+                    # Move forward in time
+                    self.tc += 1
+                    self.speed_tracker = 1
+
+                # Because this is an online/streaming clustering algorithm, it could be fed lots of data over a long
+                # period of time if used in production. Point IDs will loop around after the MAX_POINT_ID-th point
+                # is fed to the algorithm. This means that we will only be able to retrieve the cluster assignments
+                # for the most recent MAX_POINT_ID points we've fit.
+                if self.next_point_id == MAX_POINT_ID - 1:
+                    self.next_point_id = 0
+                else:
+                    self.next_point_id += 1
 
         elif self.init_points is None:
             # This is the first batch of points we've seen
@@ -173,11 +197,11 @@ class DenStream:
                 lims, dists, inds = index.range_search(query, epsilon)
 
                 # Exclude points that are already part of other p-micro-clusters
-                inds = list(set(inds) - assigned)
+                inds = list(set([int(x) for x in inds]) - assigned)
 
                 if len(inds) >= self.beta * self.mu:
                     # This point and its epsilon neighborhood are heavy enough to be a p-micro-cluster
-                    new_pmc = MicroCluster(self.init_points[inds], 1, self.lamb)
+                    new_pmc = MicroCluster(self.init_points[inds], [point_idx], 1, self.lamb)
                     self.pmc.append(new_pmc)
 
                     # The points of this new p-micro-cluster are now off the table
@@ -220,22 +244,30 @@ class DenStream:
             cluster = []
             for idx in inds:
                 cmc = cmcs[idx]
-                cluster.extend(cmc.points.tolist())
+                cluster.extend(zip(cmc.point_ids, cmc.points.tolist()))
 
             clusters.append(cluster)
+
+        logger.debug(
+            "Clustering Request:"
+            f"\n\toutlier-micro-clusters:   {len(self.omc)}"
+            f"\n\tpotential-micro-clusters: {len(self.pmc)}"
+            f"\n\tcore-micro-clusters:      {len(cmcs)}"
+            f"\n\tclusters:                 {len(clusters)}"
+        )
 
         return clusters
 
 
 if __name__ == "__main__":
     # Create points
-    X = np.random.uniform(low=0, high=10, size=(1000, 3))
+    X = np.random.normal(size=(3000, 3))
 
     # Create model
-    lamb = 0.01
+    lamb = 0.05
     beta = 0.75
-    mu = 5
-    epsilon = 1
+    mu = 20
+    epsilon = 0.5
     n_init_points = int(X.shape[0] * 0.25)
     stream_speed = 10
 
@@ -247,6 +279,7 @@ if __name__ == "__main__":
     # Get full clusters
     t = 0
     for cluster in model._get_clusters():
+        print(cluster)
         t += len(cluster)
         print(len(cluster))
 
