@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "faisst-denstream"
+version = "0.0.1"
+authors = [
+  { name="Jake Hansen", email="jakehansendev@proton.me" },
+]
+description = "A performant implementation of the DenStream algorithm that relies heavily on FAISS"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+license-files = ["LICEN[CS]E*"]
+dependencies = [
+    "numpy",
+    "faiss-cpu",
+    "loguru"
+]
+
+[project.urls]
+Homepage = "https://github.com/StateFromJakeFarm/faisst-denstream"
+Issues = "https://github.com/StateFromJakeFarm/faisst-denstream/issues"

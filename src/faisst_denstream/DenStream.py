@@ -2,7 +2,7 @@ import numpy as np
 import faiss
 
 from loguru import logger
-from MicroCluster import MicroCluster
+from faisst_denstream.MicroCluster import MicroCluster
 from collections import Counter
 
 # This is sys.maxsize on my machine
@@ -196,7 +196,7 @@ class DenStream:
 
                 # Find points in epsilon neighborhood
                 query = np.array([self.init_points[point_idx]])
-                lims, dists, inds = index.range_search(query, epsilon)
+                lims, dists, inds = index.range_search(query, self.epsilon)
 
                 # Exclude points that are already part of other p-micro-clusters
                 inds = list(set([int(x) for x in inds]) - assigned)
