@@ -4,18 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faisst-denstream"
-version = "0.0.4"
+version = "0.0.8"
 dependencies = [
     "numpy",
     "loguru",
     "faiss-cpu",
+    "scikit-learn"
 ]
 authors = [
   { name="Jake Hansen", email="jakehansendev@proton.me" },
 ]
 description = "A performant implementation of the DenStream algorithm that relies heavily on FAISS"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
