@@ -3,8 +3,8 @@ import faiss
 
 from loguru import logger
 from collections import Counter
-from sklearn.base import BaseEstimator
 from faisst_denstream.MicroCluster import MicroCluster
+from inspect import signature
 
 
 # This is sys.maxsize on my machine
@@ -12,7 +12,7 @@ MAX_POINT_ID = 9223372036854775807
 MAX_CLUSTER_ID = 9223372036854775807 
 
 
-class DenStream(BaseEstimator):
+class DenStream:
     @logger.catch(reraise=True)
     def __init__(
             self,
@@ -52,6 +52,25 @@ class DenStream(BaseEstimator):
             f"\n\tn_init_points = {self.n_init_points}"
             f"\n\tstream_speed  = {self.stream_speed}"
         )
+
+
+    def get_params(
+            self,
+            deep=True):
+
+        init_args = signature(self.__init__)
+
+        return {a: getattr(self, a) for a in init_args.parameters.keys()}
+
+
+    def set_params(
+            self,
+            **params):
+
+        for param, value in params.items():
+            setattr(self, param, value)
+
+        return self
 
 
     def _merge_new_point(
