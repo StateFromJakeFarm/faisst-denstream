@@ -3,7 +3,8 @@ import faiss
 
 from loguru import logger
 from collections import Counter
-from faisst_denstream.MicroCluster import MicroCluster
+#from faisst_denstream.MicroCluster import MicroCluster
+from MicroCluster import MicroCluster
 from inspect import signature
 from sklearn.base import BaseEstimator
 
@@ -247,27 +248,44 @@ class DenStream(BaseEstimator):
 
 
     def _get_clusters(self):
-        # Find all p-micro-clusters that qualify as c-micro-clusters
-        cmcs = [p for p in self.pmc if p.weight >= self.mu]
-        cmc_centers = np.vstack([c.center for c in cmcs])
+        # Find directly-densely-connected groups of p-micro-clusters 
+        pmc_centers = np.vstack([p.center for p in self.pmc])
+        index = faiss.IndexFlatL2(pmc_centers.shape[1])
+        index.add(pmc_centers)
 
-        # Find groups of c-micro-clusters 
-        index = faiss.IndexFlatL2(cmc_centers.shape[1])
-        index.add(cmc_centers)
-
-        clusters = []
-        assigned = set()
-        for cmc_idx, cmc_center in enumerate(cmc_centers):
-            if cmc_idx in assigned:
+        pmc_cluster_ids = [None for _ in range(len(self.pmc))]
+        for cur_idx, cur_center in enumerate(cmc_centers):
+            if pmc_cluster_ids[cur_idx] is not None:
+                # This p-micro-cluster has already been assigned to a cluster
                 continue
 
-            # Find centers 2 or fewer epsilons apart (radii of micro-clusters touching)
+            # Find centers 2 or fewer epsilons apart (max distance between two pmc)
             query = np.array([cmc_center])
-            lims, dists, inds = index.range_search(query, 2 * self.epsilon)
+            lims, dists, neighb_indeces = index.range_search(query, 2 * self.epsilon)
 
-            # Exclude points that are already part of other clusters
-            inds = list(set(inds) - assigned)
-            assigned.update(inds)
+            # Two micro clusters can be 2*epsilon apart and still not be densely connected because the
+            # actual radii of the micro clusters themselves might not be touching
+            ddc = []
+            for dist, neighb_idx in zip(dists, neighb_indeces):
+                if dist <= cmcs[cur_idx].radius + cmcs[neighb_idx].radius:
+                    # Radii are actually touching
+                    ddc.append(neighb_idx)
+
+            # Check if any of the points we're directly-density-connected to are already
+            # part of another cluster
+            neighbor_cluster_ids = [pmc_cluster_ids[n] for n in ddc if pmc_cluster_ids[n] is not None]
+            if len(neighbor_cluster_ids) > 0:
+                # At least one neighbor is already in a cluster, so assign this micro cluster, all neighbors,
+                # and all points belonging to clusters of which neighbors are members to the neighbor
+                # cluster with the smallest ID
+                smallest_neighbor_cluster_id = min(neighbor_cluster_ids)
+                pmc_cluster_ids[cur_idx] = smallest_neighbor_cluster_id
+
+            for neighb_idx in neighb_indeces:
+                if pmc_cluster_ids[neighb_idx] is not None and pmc_cluster_ids[neighb_idx] != smallest_neighbor_cluster_id:
+                    # This neighbor belongs to another cluster that needs to be subsumed into the oldest neighbor cluster
+                    self._subsume_cluster(smallest_neighbor_cluter_id, pmc_cluster_ids[neighb_idx])
+
 
             # Add all points from each c-micro-cluster into bucket
             cluster_points = []
