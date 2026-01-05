@@ -3,8 +3,7 @@ import faiss
 
 from loguru import logger
 from collections import Counter
-#from faisst_denstream.MicroCluster import MicroCluster
-from MicroCluster import MicroCluster
+from faisst_denstream.MicroCluster import MicroCluster
 from inspect import signature
 from sklearn.base import BaseEstimator
 
@@ -59,33 +58,32 @@ class DenStream(BaseEstimator):
             point,
             current_time):
 
-        # Find out which p-micro-cluster center the new point is closest to
-        pmc_centers = np.vstack([p.center for p in self.pmc])
-        index = faiss.IndexFlatL2(pmc_centers.shape[1])
-        index.add(pmc_centers)
-
         if len(point.shape) == 1:
             # Needs to be 2-dim
             point = np.array([point])
 
-        dist, pmc_idx = index.search(point, 1)
-        dist = np.sqrt(dist[0][0])
-        pmc_idx = pmc_idx[0][0]
+        # Find out which p-micro-cluster center the new point is closest to
+        if len(self.pmc) > 0:
+            pmc_centers = np.vstack([p.center for p in self.pmc])
+            index = faiss.IndexFlatL2(pmc_centers.shape[1])
+            index.add(pmc_centers)
 
-        # Get would-be radius if this point is added to its nearest p-micro-cluster
-        would_be_radius = self.pmc[pmc_idx]._get_radius_if_new_point_added(point)
-        if would_be_radius <= self.epsilon:
-            # Found a home!
-            logger.debug(f"Added new point to potential-micro-cluster #{pmc_idx}")
-            self.pmc[pmc_idx].add_point(point)
+            dist, pmc_idx = index.search(point, 1)
+            dist = np.sqrt(dist[0][0])
+            pmc_idx = pmc_idx[0][0]
 
-            return self.pmc[pmc_idx]
+            # Get would-be radius if this point is added to its nearest p-micro-cluster
+            would_be_radius = self.pmc[pmc_idx]._get_radius_if_new_point_added(point)
+            if would_be_radius <= self.epsilon:
+                # Found a home!
+                self.pmc[pmc_idx].add_point(point)
+
+                return self.pmc[pmc_idx]
 
         # We could not find a p-micro-cluster to accept the new point, so now we need
         # to check the o-micro-clusters
         if len(self.omc) == 0:
             # This point will become our first o-micro-cluster
-            logger.debug(f"Created our first outlier-micro-cluster")
             new_omc = MicroCluster(point, self.tc, self.lamb)
             self.omc.append(new_omc)
 
@@ -102,24 +100,19 @@ class DenStream(BaseEstimator):
         would_be_radius = self.omc[omc_idx]._get_radius_if_new_point_added(point)
         if would_be_radius <= self.epsilon:
             # Found a fixer-upper home!
-            logger.debug(f"Added new point to outlier-micro-cluster #{omc_idx}")
             self.omc[omc_idx].add_point(point)
 
             if self.omc[omc_idx].weight >= self.beta * self.mu:
                 self.pmc.append(self.omc[omc_idx])
                 self.omc.pop(omc_idx)
 
-                logger.debug(
-                    f"Outlier-micro-cluster #{omc_idx} has been upgraded to a potential-micro-cluster."
-                    f" There are now {len(self.pmc)} p-micro-clusters and {len(self.omc)} o-micro-clusters."
-                )
+                return self.pmc[-1]
 
-            return self.pmc[-1]
+            return self.omc[omc_idx]
         else:
             # This point doesn't fit into any p or o-micro-clusters, so it becomes the start of a new o-micro-cluster
             new_omc = MicroCluster(point, self.tc, self.lamb)
             self.omc.append(new_omc)
-            logger.debug(f"Creating new outlier-micro-cluster. There are now {len(self.omc)} outlier-micro-clusters.")
 
             return new_omc
 
@@ -227,7 +220,7 @@ class DenStream(BaseEstimator):
 
             logger.debug(f"{self.n_init_points - len(assigned)}/{self.n_init_points} points did not get assigned to a potential-micro-cluster")
 
-        if not self.initialized and self.init_points.shape[0] == self.n_init_points:
+        if not self.initialized and self.init_points.shape[0] == self.n_init_points and len(self.pmc) > 0:
             self.initialized = True
 
         if self.initialized and X.shape[0] > 0:
@@ -248,6 +241,11 @@ class DenStream(BaseEstimator):
 
 
     def _generate_clusters(self):
+
+        if len(self.pmc) == 0:
+            # Can't have clusters without p-micro-clusters
+            return
+
         # Find directly-densely-connected groups of p-micro-clusters 
         pmc_centers = np.vstack([p.center for p in self.pmc])
         index = faiss.IndexFlatL2(pmc_centers.shape[1])
@@ -265,9 +263,9 @@ class DenStream(BaseEstimator):
 
             # Two micro clusters can be 2*epsilon apart and still not be densely connected because the
             # actual radii of the micro clusters themselves might not be touching
+            dists = np.sqrt(dists)
             ddc = []
             for dist, neighb_idx in zip(dists, double_epsilon_indeces):
-                dist = np.sqrt(dist)
                 if neighb_idx != cur_idx and dist <= self.pmc[cur_idx].radius + self.pmc[neighb_idx].radius:
                     # Radii are actually touching
                     ddc.append(neighb_idx)
@@ -300,10 +298,29 @@ class DenStream(BaseEstimator):
                     # This neighbor does not belong to a cluster yet
                     pmc_cluster_ids[neighb_idx] = cluster_id
 
+        # This is a slight change from how the algo works in the paper. Instead of requiring at least one of the
+        # micro clusters in a cluster to be a core-micro-cluster, we will just check if the sum of the weights
+        # of the potential-micro-clusters in the cluster is above mu.
+        total_weights = {}
+        for pmc_idx, cluster_id in enumerate(pmc_cluster_ids):
+            if cluster_id in total_weights:
+                total_weights[cluster_id] += self.pmc[pmc_idx].weight
+            else:
+                total_weights[cluster_id] = self.pmc[pmc_idx].weight
+
+        not_heavy_enough = set()
+        for cluster_id, total_weight in total_weights.items():
+            if total_weight < self.mu:
+                not_heavy_enough.add(cluster_id)
 
         last_cluster_ids = {c: [] for c in set(pmc_cluster_ids)}
         for pmc_idx, cluster_id in enumerate(pmc_cluster_ids):
-            last_cluster_ids[cluster_id].append(self.pmc[pmc_idx].last_cluster_id)
+            if cluster_id in not_heavy_enough:
+                # The cluster this p-micro-cluster was part of isn't actually heavy enough to be a cluster
+                pmc_cluster_ids[pmc_idx] = -1
+            else:
+                # Record the last cluster that this PM
+                last_cluster_ids[cluster_id].append(self.pmc[pmc_idx].last_cluster_id)
 
         # The micro-clusters of a cluster could split apart to become part of another cluster
         # over time and maybe even re-merge together later on. In order to provide some consistency
@@ -354,6 +371,11 @@ class DenStream(BaseEstimator):
             self,
             X):
 
+        outputs = [-1 for _ in X]
+        if len(self.pmc) == 0:
+            # Can't have clusters without p-micro-clusters
+            return outputs
+
         self._generate_clusters()
 
         # TODO: should this map to any pmc, or only cmcs?
@@ -367,7 +389,6 @@ class DenStream(BaseEstimator):
         dists = dists[:,0]
         indeces = indeces[:,0]
 
-        outputs = [-1 for _ in X]
         for point_idx, neighbor_idx, dist in zip(range(X.shape[0]), indeces, dists):
             if np.sqrt(dist) <= self.epsilon:
                 outputs[point_idx] = self.pmc[neighbor_idx].last_cluster_id
@@ -380,10 +401,6 @@ class DenStream(BaseEstimator):
             self,
             X,
             y=None):
-
-        # These will end up being the point IDs
-        starting_point_id = self.next_point_id
-        point_ids = set(range(starting_point_id, starting_point_id + X.shape[0]))
 
         # Fit new points
         self.partial_fit(X)

@@ -6,6 +6,7 @@ from sys import stderr
 from loguru import logger
 from sklearn.model_selection import ParameterGrid
 from dbcv import dbcv
+from collections import Counter
 
 def clustering_grid_search(model_class, X, param_grid):
     best_score = -1
@@ -16,6 +17,10 @@ def clustering_grid_search(model_class, X, param_grid):
         try:
             model = model_class(**params)
             labels = model.fit_predict(X)
+
+            assigned_idx = np.where(labels != -1)[0]
+            labels = labels[assigned_idx]
+            num_clusters = np.unique(labels).shape[0] - 1 # one of them is -1
         except:
             continue
 
@@ -25,9 +30,6 @@ def clustering_grid_search(model_class, X, param_grid):
         else:
             score = -1
 
-        assigned_idx = np.where(labels != -1)[0]
-        assignments = labels[assigned_idx]
-        num_clusters = np.unique(assignments).shape[0]
 
         print(f"DBCV: {score:.4f}\tnum clusters: {num_clusters}")
 
@@ -42,7 +44,7 @@ def clustering_grid_search(model_class, X, param_grid):
 logger.remove()
 
 test_dataset_size = 1000
-test_dataset_dim = 3
+test_dataset_dim = 2
 
 X = np.random.uniform(randint(0, 10), randint(1, 10), size=(test_dataset_size, test_dataset_dim))
 
@@ -58,4 +60,3 @@ grid = {
 best_model, best_params, best_score = clustering_grid_search(DenStream, X, grid)
 print(best_score)
 print(best_params)
-print(len(best_model._get_clusters()))
