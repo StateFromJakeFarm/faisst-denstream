@@ -161,10 +161,12 @@ class DenStream(BaseEstimator):
                 self.speed_tracker = 1
 
                 for pmc in self.pmc:
-                    pmc.degrade()
+                    if pmc != winner:
+                        pmc.degrade()
 
                 for omc in self.omc:
-                    omc.degrade()
+                    if omc != winner:
+                        omc.degrade()
 
 
     def partial_fit(
@@ -261,13 +263,14 @@ class DenStream(BaseEstimator):
             # Find centers 2 or fewer epsilons apart (max distance between two pmc)
             query = np.array([cur_center])
             lims, dists, double_epsilon_indeces = index.range_search(query, np.square(2 * self.epsilon)) # L2 gives squared distances
+            print(dists)
 
             # Two micro clusters can be 2*epsilon apart and still not be densely connected because the
             # actual radii of the micro clusters themselves might not be touching
             dists = np.sqrt(dists)
             ddc = []
             for dist, neighb_idx in zip(dists, double_epsilon_indeces):
-                if neighb_idx != cur_idx and dist <= self.pmc[cur_idx].radius + self.pmc[neighb_idx].radius:
+                if neighb_idx != cur_idx and dist <= 2*self.epsilon:#self.pmc[cur_idx].radius + self.pmc[neighb_idx].radius:
                     # Radii are actually touching
                     ddc.append(neighb_idx)
 
@@ -408,30 +411,54 @@ class DenStream(BaseEstimator):
 
 
 if __name__ == "__main__":
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
     from random import randint
     from sys import stderr
+    from sklearn.datasets import make_moons
 
-    logger.remove()
-    logger.add(stderr, level="INFO")
-
+    # Create data
     test_dataset_size = 1000
-    test_dataset_dim = 3
-    num_test_datasets = 10
+    data, _ = make_moons(n_samples=test_dataset_size, noise=0.05)
+    data *= 10
+    #data = np.random.uniform(0, 10, size=(test_dataset_size, 2))
+    np.random.shuffle(data)
 
     # Create model
-    lamb = 0.05
-    beta = 0.5
-    mu = 5
-    epsilon = 0.75
-    n_init_points = int(test_dataset_size * 0.25)
+    lamb = 0.1
+    beta = 0.2
+    mu = 10
+    epsilon = 4
+    n_init_points = int(test_dataset_size * 0.5)
     stream_speed = 1
 
     model = DenStream(lamb, beta, mu, epsilon, n_init_points, stream_speed)
     print(model.get_params())
 
-    for i in range(num_test_datasets):
-        X = np.random.normal(randint(0, 10), randint(1, 10), size=(test_dataset_size, test_dataset_dim))
+    # Train model
+    preds = model.fit_predict(data)
 
-        preds = model.fit_predict(X)
-        num_assigned = np.where(preds != -1)[0].shape[0]
-        print(f"{num_assigned}/{test_dataset_size} ({num_assigned / test_dataset_size * 100:.1f}%) points landed in clusters")
+    # Plot results and micro clusters
+    points = []
+    clusters = []
+    for point, pred in zip(data, preds):
+        points.append(point)
+        clusters.append(pred)
+
+    out = pd.DataFrame(data=points, columns=['x', 'y'])
+    out['c'] = clusters
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    sns.scatterplot(data=out, x='x', y='y', hue='c', palette='tab10')
+
+    for pmc in model.pmc:
+        ax.add_patch(plt.Circle(pmc.center, pmc.radius, color='green', fill=False, lw=2))
+
+    for omc in model.omc:
+        ax.add_patch(plt.Circle(omc.center, omc.radius, color='red', fill=False, lw=2))
+
+    ax.set_aspect('equal', adjustable='datalim')
+
+    plt.show()
