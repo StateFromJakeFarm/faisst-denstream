@@ -13,7 +13,6 @@ MAX_CLUSTER_ID = 9223372036854775807
 
 
 class DenStream(BaseEstimator):
-    @logger.catch(reraise=True)
     def __init__(
             self,
             lamb=0.05,
@@ -76,6 +75,8 @@ class DenStream(BaseEstimator):
             would_be_radius = self.pmc[pmc_idx]._get_radius_if_new_point_added(point)
             if would_be_radius <= self.epsilon:
                 # Found a home!
+                logger.debug('point added to existing p-micro-cluster')
+                print(self.pmc[pmc_idx].radius, would_be_radius)
                 self.pmc[pmc_idx].add_point(point)
 
                 return self.pmc[pmc_idx]
@@ -84,6 +85,7 @@ class DenStream(BaseEstimator):
         # to check the o-micro-clusters
         if len(self.omc) == 0:
             # This point will become our first o-micro-cluster
+            logger.debug('point became new o-micro-cluster')
             new_omc = MicroCluster(point, self.tc, self.lamb)
             self.omc.append(new_omc)
 
@@ -100,9 +102,11 @@ class DenStream(BaseEstimator):
         would_be_radius = self.omc[omc_idx]._get_radius_if_new_point_added(point)
         if would_be_radius <= self.epsilon:
             # Found a fixer-upper home!
+            logger.debug('point added to o-micro-cluster')
             self.omc[omc_idx].add_point(point)
 
             if self.omc[omc_idx].weight >= self.beta * self.mu:
+                logger.debug('o-micro-cluster upgraded to p-micro-cluster')
                 self.pmc.append(self.omc[omc_idx])
                 self.omc.pop(omc_idx)
 
@@ -111,6 +115,7 @@ class DenStream(BaseEstimator):
             return self.omc[omc_idx]
         else:
             # This point doesn't fit into any p or o-micro-clusters, so it becomes the start of a new o-micro-cluster
+            logger.debug('point became new o-micro-cluster')
             new_omc = MicroCluster(point, self.tc, self.lamb)
             self.omc.append(new_omc)
 
@@ -155,17 +160,7 @@ class DenStream(BaseEstimator):
                 self.tc += 1
                 self.speed_tracker = 1
 
-                # All clusters except the one that received the point get degraded a bit
-                for pmc in self.pmc:
-                    if pmc != winner:
-                        pmc.degrade()
 
-                for omc in self.omc:
-                    if omc != winner:
-                        omc.degrade()
-
-
-    @logger.catch(reraise=True)
     def partial_fit(
             self,
             X,
@@ -385,18 +380,13 @@ class DenStream(BaseEstimator):
 
         dists, indeces = index.search(X, k=1)
 
-        # Only include labels for points within one epsilon of the cluster
-        dists = dists[:,0]
         indeces = indeces[:,0]
-
-        for point_idx, neighbor_idx, dist in zip(range(X.shape[0]), indeces, dists):
-            if np.sqrt(dist) <= self.epsilon:
-                outputs[point_idx] = self.pmc[neighbor_idx].last_cluster_id
+        for point_idx, neighbor_idx in zip(range(X.shape[0]), indeces):
+            outputs[point_idx] = self.pmc[neighbor_idx].last_cluster_id
 
         return outputs
 
 
-    @logger.catch(reraise=True)
     def fit_predict(
             self,
             X,

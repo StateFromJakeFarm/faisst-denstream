@@ -22,6 +22,7 @@ class MicroCluster:
         self.linear_sum = np.sum(points, axis=0)
         self.squared_sum = np.sum(np.square(points), axis=0)
         variance_per_dim = (self.squared_sum / self.weight) - np.square(self.linear_sum / self.weight)
+        variance_per_dim = np.maximum(variance_per_dim, 0)
         self.radius = np.sqrt(np.sum(variance_per_dim))
 
         # Init Center
@@ -43,6 +44,7 @@ class MicroCluster:
         self.center = self.linear_sum / self.weight
 
         variance_per_dim = (self.squared_sum / self.weight) - np.square(self.linear_sum / self.weight)
+        variance_per_dim = np.maximum(variance_per_dim, 0)
         self.radius = np.sqrt(np.sum(variance_per_dim))
 
     def degrade(self):
@@ -54,6 +56,7 @@ class MicroCluster:
         self.center = self.linear_sum / self.weight
 
         variance_per_dim = (self.squared_sum / self.weight) - np.square(self.linear_sum / self.weight)
+        variance_per_dim = np.maximum(variance_per_dim, 0)
         self.radius = np.sqrt(np.sum(variance_per_dim))
 
 
@@ -63,6 +66,7 @@ class MicroCluster:
         new_squared_sum = self.squared_sum + np.square(point)
         new_weight = self.weight + 1
         new_variance_per_dim = (new_squared_sum / new_weight) - np.square(new_linear_sum / new_weight)
+        new_variance_per_dim = np.maximum(new_variance_per_dim, 0)
 
         return np.sqrt(np.sum(new_variance_per_dim))
 
