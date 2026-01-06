@@ -3,7 +3,8 @@ import faiss
 
 from loguru import logger
 from collections import Counter
-from faisst_denstream.MicroCluster import MicroCluster
+#from faisst_denstream.MicroCluster import MicroCluster
+from MicroCluster import MicroCluster
 from inspect import signature
 from sklearn.base import BaseEstimator
 
@@ -76,7 +77,6 @@ class DenStream(BaseEstimator):
             if would_be_radius <= self.epsilon:
                 # Found a home!
                 logger.debug('point added to existing p-micro-cluster')
-                print(self.pmc[pmc_idx].radius, would_be_radius)
                 self.pmc[pmc_idx].add_point(point)
 
                 return self.pmc[pmc_idx]
@@ -262,21 +262,21 @@ class DenStream(BaseEstimator):
 
             # Find centers 2 or fewer epsilons apart (max distance between two pmc)
             query = np.array([cur_center])
-            lims, dists, double_epsilon_indeces = index.range_search(query, np.square(2 * self.epsilon)) # L2 gives squared distances
-            print(dists)
+            lims, dists, double_epsilon_indeces = index.range_search(query, np.square(2 * 2*self.epsilon)) # L2 gives squared distances
+            dists = np.sqrt(dists)
 
             # Two micro clusters can be 2*epsilon apart and still not be densely connected because the
             # actual radii of the micro clusters themselves might not be touching
-            dists = np.sqrt(dists)
             ddc = []
             for dist, neighb_idx in zip(dists, double_epsilon_indeces):
-                if neighb_idx != cur_idx and dist <= 2*self.epsilon:#self.pmc[cur_idx].radius + self.pmc[neighb_idx].radius:
+                if neighb_idx != cur_idx and dist <= self.pmc[cur_idx].radius + self.pmc[neighb_idx].radius:
                     # Radii are actually touching
                     ddc.append(neighb_idx)
 
             # Check if any of the points we're directly-density-connected to are already
             # part of another cluster
             neighbor_cluster_ids = [pmc_cluster_ids[n] for n in ddc if pmc_cluster_ids[n] != -1]
+            print(neighbor_cluster_ids)
             if len(neighbor_cluster_ids) > 0:
                 # At least one neighbor is already in a cluster, so assign this micro cluster, all neighbors,
                 # and all points belonging to clusters of which neighbors are members to the neighbor
@@ -290,6 +290,7 @@ class DenStream(BaseEstimator):
             pmc_cluster_ids[cur_idx] = cluster_id
 
             for neighb_idx in ddc:
+                print(pmc_cluster_ids[neighb_idx])
                 if pmc_cluster_ids[neighb_idx] != -1 and pmc_cluster_ids[neighb_idx] != cluster_id:
                     # This neighbor belongs to another cluster that needs to be subsumed into the oldest neighbor cluster
                     for idx, cur_cluster_id in enumerate(pmc_cluster_ids):
@@ -427,10 +428,10 @@ if __name__ == "__main__":
     np.random.shuffle(data)
 
     # Create model
-    lamb = 0.1
+    lamb = 0.01
     beta = 0.2
-    mu = 10
-    epsilon = 4
+    mu = 8
+    epsilon = 3
     n_init_points = int(test_dataset_size * 0.5)
     stream_speed = 1
 

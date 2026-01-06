@@ -1,29 +1,31 @@
 import numpy as np
 
+fac = 2
 
 class MicroCluster:
     def __init__(
             self,
-            points,
+            point,
             creation_time,
             lamb):
 
-        points = points
-        point_arrival_times = np.array([creation_time for _ in range(points.shape[0])])
+        if len(point.shape) == 2:
+            point = point[0]
+
         self.lamb = lamb
         self.t0 = creation_time
         self.last_cluster_id = -1
         self.degrade_factor = np.pow(2, -self.lamb)
 
         # Init weight
-        self.weight = points.shape[0]
+        self.weight = 1
 
         # Init radius
-        self.linear_sum = np.sum(points, axis=0)
-        self.squared_sum = np.sum(np.square(points), axis=0)
+        self.linear_sum = point
+        self.squared_sum = np.square(point)
         variance_per_dim = (self.squared_sum / self.weight) - np.square(self.linear_sum / self.weight)
         variance_per_dim = np.maximum(variance_per_dim, 0)
-        self.radius = np.sqrt(np.sum(variance_per_dim))
+        self.radius = 0
 
         # Init Center
         self.center = self.linear_sum / self.weight
@@ -33,7 +35,8 @@ class MicroCluster:
             self,
             point):
 
-        point = point[0]
+        if len(point.shape) == 2:
+            point = point[0]
 
         # See property 3.1 in paper
         self.linear_sum += point
@@ -45,7 +48,7 @@ class MicroCluster:
 
         variance_per_dim = (self.squared_sum / self.weight) - np.square(self.linear_sum / self.weight)
         variance_per_dim = np.maximum(variance_per_dim, 0)
-        self.radius = np.sqrt(np.sum(variance_per_dim))
+        self.radius = np.sqrt(np.sum(variance_per_dim)) * fac
 
     def degrade(self):
         self.linear_sum *= self.degrade_factor
@@ -57,10 +60,13 @@ class MicroCluster:
 
         variance_per_dim = (self.squared_sum / self.weight) - np.square(self.linear_sum / self.weight)
         variance_per_dim = np.maximum(variance_per_dim, 0)
-        self.radius = np.sqrt(np.sum(variance_per_dim))
+        self.radius = np.sqrt(np.sum(variance_per_dim)) * fac
 
 
     def _get_radius_if_new_point_added(self, point):
+        if len(point.shape) == 2:
+            point = point[0]
+
         # See property 3.1 in paper
         new_linear_sum = self.linear_sum + point
         new_squared_sum = self.squared_sum + np.square(point)
@@ -68,7 +74,7 @@ class MicroCluster:
         new_variance_per_dim = (new_squared_sum / new_weight) - np.square(new_linear_sum / new_weight)
         new_variance_per_dim = np.maximum(new_variance_per_dim, 0)
 
-        return np.sqrt(np.sum(new_variance_per_dim))
+        return np.sqrt(np.sum(new_variance_per_dim)) * fac
 
 
     def get_xi(self, tc, Tp):
