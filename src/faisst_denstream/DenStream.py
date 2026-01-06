@@ -160,6 +160,12 @@ class DenStream(BaseEstimator):
                 self.tc += 1
                 self.speed_tracker = 1
 
+                for pmc in self.pmc:
+                    pmc.degrade()
+
+                for omc in self.omc:
+                    omc.degrade()
+
 
     def partial_fit(
             self,
