@@ -12,13 +12,80 @@ from collections import deque
 class DenStream(BaseEstimator):
     def __init__(
             self,
-            lamb=0.05,
-            beta=0.7,
-            mu=10,
-            epsilon=0.3,
-            n_init_points=300,
-            stream_speed=10,
-            radius_multiplier=2):
+            lamb,
+            mu,
+            beta,
+            epsilon,
+            n_init_points,
+            stream_speed=1,
+            radius_multiplier=1):
+
+        """
+        Density-Based Clustering over an Evolving Data Stream with Noise (DenStream)
+        implemented using the FAISS library for fast vector search
+
+        Parameters
+        ----------
+        lamb: float (required)
+            The "fading" or "forgetting" factor determines how quickly past data
+            points are forgotten (i.e. lose their influence on current clusters).
+            The larger the value, the faster points are forgotten. Must be greater
+            than 0.
+
+        mu: int or float (required)
+            The minimum weight required to form a cluster. Each point's weight begins
+            as 1 and then fades with time at a rate determined by lamb. Mu must be
+            greater than 0.
+
+        beta: float (required)
+            The fraction of mu (weight) that is required for a micro-cluster to be a
+            candidate for merging into an actual cluster (potential-micro-cluster).
+            Beta must be in the range (0, 1].
+
+        epsilon: int or float (required)
+            The maximum distance a point is allowed to be from its micro-cluster's
+            center. Epsilon must be greater than 0.
+
+        n_init_points: int (required)
+            The number of points used to initialize the potential-micro-clusters.
+            The model must "fit" to at least this many points before any labels
+            can be predicted.
+
+        stream_speed: int (optional, default 1)
+            The number of points that must be fitted in order for the model's
+            current time to be incremented. Because points' influence fade with
+            increasing time, higher values of stream_speed lead to the past having
+            a greater effect on current clusters. stream_speed must be greater
+            than 0.
+
+        radius_multiplier: float (optional, default 1)
+            A multiplier applied to potential-micro-clusters' radii during the
+            merging process used to create the real clusters. The real clusters
+            are created by combining all potential-micro-clusters whose radii
+            overlap. Sometimes long, dense blobs of points can create lots of
+            heavy potential-micro-clusters whose radii are very small. You'd
+            typically like all of the potential-micro-clusters in these long
+            stretches of points to be combined into a single cluster, but this won't
+            happen due to their small radii. This multiplier is NOT in the original
+            paper and is added here for your experimentation. radius_multiplier
+            must be greater than 0.
+        """
+
+        # Check passed params
+        if lamb <= 0:
+            raise ValueError("lamb (lambda) must be greater than 0")
+        if mu <= 0:
+            raise ValueError("mu must be greater than 0")
+        if beta <= 0 or beta > 1:
+            raise ValueError("beta must be in the range 0 < beta <= 1")
+        if epsilon <= 0:
+            raise ValueError("epsilon must be greater than 0")
+        if n_init_points < 1:
+            raise ValueError("n_init_points must be greater than 0")
+        if stream_speed <= 0:
+            raise ValueError("stream_speed must be greater than 0")
+        if radius_multiplier <= 0:
+            raise ValueError("radius_multiplier must be greater than 0")
 
         # Hyperparameters
         self.lamb = lamb
@@ -39,16 +106,9 @@ class DenStream(BaseEstimator):
         self.initialized = False
         self.next_cluster_id = 0
 
-        logger.debug(
-            "Model Params:"
-            f"\n\tlambda        = {self.lamb}"
-            f"\n\tbeta          = {self.beta}"
-            f"\n\tmu            = {self.mu}"
-            f"\n\tepsilon       = {self.epsilon}"
-            f"\n\tTp            = {self.Tp}"
-            f"\n\tn_init_points = {self.n_init_points}"
-            f"\n\tstream_speed  = {self.stream_speed}"
-        )
+
+    def __sklearn_is_fitted__(self):
+        return self.initialized
 
 
     def _merge_new_point(
@@ -357,7 +417,8 @@ class DenStream(BaseEstimator):
 
     def predict(
             self,
-            X):
+            X,
+            max_dist_outside_radius=np.inf):
 
         outputs = [-1 for _ in X]
         if len(self.pmc) == 0:
@@ -372,10 +433,13 @@ class DenStream(BaseEstimator):
         index.add(pmc_centers)
 
         dists, indeces = index.search(X, k=1)
+        dists = np.sqrt(dists) # Index returns squared distances
 
         indeces = indeces[:,0]
-        for point_idx, neighbor_idx in zip(range(X.shape[0]), indeces):
-            outputs[point_idx] = self.pmc[neighbor_idx].last_cluster_id
+        for point_idx, closest_pmc_idx, closest_pmc_dist in zip(range(X.shape[0]), indeces, dists):
+            dist_outside_radius = closest_pmc_dist - self.pmc[closest_pmc_idx].radius
+            if dist_outside_radius <= max_dist_outside_radius:
+                outputs[point_idx] = self.pmc[closest_pmc_idx].last_cluster_id
 
         return outputs
 
@@ -383,7 +447,8 @@ class DenStream(BaseEstimator):
     def fit_predict(
             self,
             X,
-            y=None):
+            y=None,
+            max_dist_outside_radius=np.inf):
 
         # Fit new points
         self.partial_fit(X)
@@ -391,7 +456,7 @@ class DenStream(BaseEstimator):
         if not self.initialized:
             raise ValueError(f"Model has not yet consumed enough points to finish initializing ({self.init_points.shape[0]}/{self.n_init_points})!")
 
-        return self.predict(X)
+        return self.predict(X, max_dist_outside_radius=max_dist_outside_radius)
 
 
 if __name__ == "__main__":
@@ -403,11 +468,10 @@ if __name__ == "__main__":
     from sys import stderr
     from sklearn.datasets import make_moons
 
-    # Create data
+    # Create moons with noise
     test_dataset_size = 1000
-    data, _ = make_moons(n_samples=test_dataset_size, noise=0.05)
+    data, _ = make_moons(n_samples=test_dataset_size, noise=0.1)
     data *= 10
-    #data = np.random.uniform(0, 10, size=(test_dataset_size, 2))
     np.random.shuffle(data)
 
     # Create model
@@ -417,12 +481,13 @@ if __name__ == "__main__":
     epsilon = 3
     n_init_points = int(test_dataset_size * 0.5)
     stream_speed = 1
+    radius_multiplier = 2
 
-    model = DenStream(lamb, beta, mu, epsilon, n_init_points, stream_speed)
+    model = DenStream(lamb, mu, beta, epsilon, n_init_points, stream_speed, radius_multiplier)
     print(model.get_params())
 
     # Train model
-    preds = model.fit_predict(data)
+    preds = model.fit_predict(data, max_dist_outside_radius=1)
 
     # Plot results and micro clusters
     points = []
