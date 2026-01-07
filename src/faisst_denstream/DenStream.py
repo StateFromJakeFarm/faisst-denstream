@@ -3,7 +3,7 @@ import faiss
 
 from loguru import logger
 from collections import Counter
-from MicroCluster import MicroCluster
+from faisst_denstream.MicroCluster import MicroCluster
 from inspect import signature
 from sklearn.base import BaseEstimator
 from collections import deque
