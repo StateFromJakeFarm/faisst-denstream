@@ -420,6 +420,9 @@ class DenStream(BaseEstimator):
             X,
             max_dist_outside_radius=np.inf):
 
+        if not self.initialized:
+            raise BaseException("predict called before model finished initializing")
+
         outputs = [-1 for _ in X]
         if len(self.pmc) == 0:
             # Can't have clusters without p-micro-clusters
