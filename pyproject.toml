@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "faisst-denstream"
-version = "0.0.1"
+version = "0.0.5"
 dependencies = [
     "numpy",
     "loguru",
@@ -25,7 +25,8 @@ license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
 
 [project.optional-dependencies]
-gpu = ["faiss-gpu"]
+gpu-cu11 = ["faiss-gpu-cu11"]
+gpu-cu12 = ["faiss-gpu-cu12"]
 
 [project.urls]
 Homepage = "https://github.com/StateFromJakeFarm/faisst-denstream"
