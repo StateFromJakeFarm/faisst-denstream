@@ -332,23 +332,23 @@ class DenStream(BaseEstimator):
 
         # Find connected components
         pmc_clusters = [-1 for _ in range(len(self.pmc))]
-        local_next_cluster_id = 0
-        cluster_member_last_ids = []
+        starting_id = self.next_cluster_id
+        cluster_member_last_ids = {}
         for pmc_idx in range(len(self.pmc)):
             if pmc_clusters[pmc_idx] != -1:
                 # Already visited
                 continue
 
             # Cluster starts out with just one point
-            pmc_clusters[pmc_idx] = local_next_cluster_id
-            cluster_member_last_ids.append([self.pmc[pmc_idx].last_cluster_id])
+            pmc_clusters[pmc_idx] = self.next_cluster_id
+            cluster_member_last_ids[self.next_cluster_id] = [self.pmc[pmc_idx].last_cluster_id]
 
             # BFS on reachable neighbors
             Q = deque([pmc_idx])
             while len(Q) > 0:
                 cur = Q.popleft()
 
-                pmc_clusters[cur] = local_next_cluster_id
+                pmc_clusters[cur] = self.next_cluster_id
                 for neighbor in edges[cur]:
                     if pmc_clusters[neighbor] != -1:
                         # Already visited
@@ -356,9 +356,9 @@ class DenStream(BaseEstimator):
 
                     # New point in this cluster
                     Q.append(neighbor)
-                    cluster_member_last_ids[local_next_cluster_id].append(self.pmc[neighbor].last_cluster_id)
+                    cluster_member_last_ids[self.next_cluster_id].append(self.pmc[neighbor].last_cluster_id)
 
-            local_next_cluster_id += 1
+            self.next_cluster_id += 1
 
         # This is a slight change from how the algo works in the paper. Instead of requiring at least one of the
         # micro clusters in a cluster to be a core-micro-cluster, we will just check if the sum of the weights
@@ -383,7 +383,7 @@ class DenStream(BaseEstimator):
         # If the majority of this cluster was previously part of another cluster, rename it after
         # that other cluster so that there is continuity in the cluster IDs
         old_id_map = {}
-        for cluster_id, member_last_ids in enumerate(cluster_member_last_ids):
+        for cluster_id, member_last_ids in cluster_member_last_ids.items():
             last_id_counts = Counter(member_last_ids)
             most_common_old = last_id_counts.most_common()[0][0]
             if most_common_old != -1:
@@ -411,7 +411,7 @@ class DenStream(BaseEstimator):
             "Clustering Request:"
             f"\n\toutlier-micro-clusters:   {len(self.omc)}"
             f"\n\tpotential-micro-clusters: {len(self.pmc)}"
-            f"\n\tclusters:                 {local_next_cluster_id}"
+            f"\n\tclusters:                 {self.next_cluster_id - starting_id + 1}"
         )
 
 
