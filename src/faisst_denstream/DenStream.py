@@ -179,9 +179,10 @@ class DenStream(BaseEstimator):
             self,
             X):
 
+        winners = []
         for point in X:
             # Add this point to a p or o-micro-cluster
-            winner = self._merge_new_point(point, self.tc)
+            winners.append(self._merge_new_point(point, self.tc))
 
             if self.tc % self.Tp == 0:
                 logger.debug(f"Removing potential and outlier micro-clusters whose weights have fallen too far")
@@ -213,13 +214,18 @@ class DenStream(BaseEstimator):
                 self.tc += 1
                 self.speed_tracker = 1
 
+                # If a micro-cluster did not receive at least one point during this time period, its weight
+                # needs to be degraded
+                winners = set(winners)
                 for pmc in self.pmc:
-                    if pmc != winner:
+                    if pmc not in winners:
                         pmc.degrade()
 
                 for omc in self.omc:
-                    if omc != winner:
+                    if omc not in winners:
                         omc.degrade()
+
+                winners = []
 
 
     def partial_fit(
