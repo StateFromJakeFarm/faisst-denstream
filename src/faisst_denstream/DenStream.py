@@ -210,9 +210,11 @@ class DenStream(BaseEstimator):
                     del self.omc[idx]
 
             if self.speed_tracker == self.stream_speed:
+                # Reset stream speed tracker
+                self.stream_speed = 1
+
                 # Move forward in time
                 self.tc += 1
-                self.speed_tracker = 1
 
                 # If a micro-cluster did not receive at least one point during this time period, its weight
                 # needs to be degraded
@@ -226,6 +228,9 @@ class DenStream(BaseEstimator):
                         omc.degrade()
 
                 winners = []
+
+            # Advance stream speed
+            self.stream_speed += 1
 
 
     def partial_fit(
