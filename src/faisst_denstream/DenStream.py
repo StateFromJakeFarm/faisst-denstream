@@ -100,7 +100,7 @@ class DenStream(BaseEstimator):
         self.pmc = []
         self.omc = []
         self.tc = 1
-        self.speed_tracker = 1
+        self.speed_tracker = 0
         self.Tp = int(np.ceil(1/lamb * np.log(beta * mu / (beta * mu - 1))))
         self.init_points = None
         self.initialized = False
@@ -209,9 +209,12 @@ class DenStream(BaseEstimator):
                 for idx in reversed(to_delete):
                     del self.omc[idx]
 
-            if self.speed_tracker == self.stream_speed:
-                # Reset stream speed tracker
-                self.stream_speed = 1
+            # Advance stream speed tracker
+            self.speed_tracker += 1
+
+            if self.speed_tracker >= self.stream_speed:
+                # Reset stream speed tracker if we've hit the stream speed threshold
+                self.speed_tracker = 0
 
                 # Move forward in time
                 self.tc += 1
@@ -228,9 +231,6 @@ class DenStream(BaseEstimator):
                         omc.degrade()
 
                 winners = []
-
-            # Advance stream speed
-            self.stream_speed += 1
 
 
     def partial_fit(
