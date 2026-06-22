@@ -18,7 +18,8 @@ class DenStream(BaseEstimator):
             epsilon,
             n_init_points,
             stream_speed=1,
-            radius_multiplier=1):
+            radius_multiplier=1,
+            min_fraction_for_next_generation=0.5):
 
         """
         Density-Based Clustering over an Evolving Data Stream with Noise (DenStream)
@@ -69,6 +70,17 @@ class DenStream(BaseEstimator):
             happen due to their small radii. This multiplier is NOT in the original
             paper and is added here for your experimentation. radius_multiplier
             must be greater than 0.
+
+        min_fraction_for_next_generation: float (optional, default 0.5)
+            If at least this fraction of a new cluster's potential-micro-clusters
+            belonged to the same previous cluster, the new cluster will be
+            considered a continuation of that previous cluster (given same ID).
+            This decision process works on the clusters from largest to smallest,
+            so a large cluster with at least this fraction of the previous cluster's
+            PMCs will grab the previous ID assignment before a smaller cluster
+            even if that smaller cluster has a larger proportion of that previous
+            cluster's PMCs. That smaller cluster will be considered a brand new
+            cluster.
         """
 
         # Check passed params
@@ -77,7 +89,7 @@ class DenStream(BaseEstimator):
         if mu <= 0:
             raise ValueError("mu must be greater than 0")
         if beta <= 0 or beta > 1:
-            raise ValueError("beta must be in the range 0 < beta <= 1")
+            raise ValueError("beta must be in the range (0, 1]")
         if epsilon <= 0:
             raise ValueError("epsilon must be greater than 0")
         if n_init_points < 1:
@@ -86,6 +98,8 @@ class DenStream(BaseEstimator):
             raise ValueError("stream_speed must be greater than 0")
         if radius_multiplier <= 0:
             raise ValueError("radius_multiplier must be greater than 0")
+        if min_fraction_for_next_generation <= 0 or min_fraction_for_next_generation > 1:
+            raise ValueError("min_fraction_for_next_generation must be in the range (0, 1]")
 
         # Hyperparameters
         self.lamb = lamb
@@ -95,6 +109,7 @@ class DenStream(BaseEstimator):
         self.n_init_points = n_init_points
         self.stream_speed = stream_speed
         self.radius_multiplier = radius_multiplier
+        self.min_fraction_for_next_generation = min_fraction_for_next_generation
 
         # Internal components
         self.pmc = []
@@ -307,6 +322,18 @@ class DenStream(BaseEstimator):
         return self
 
 
+    def _get_id_assignment(
+            self,
+            new_cluster_id,
+            last_id_counts):
+
+        if last_id_counts.most_common()[0][1] / last_id_counts.total() >= self.min_fraction_for_next_generation:
+            # Passed the threshold! Consider this to be the next generation of a previous cluster
+            return last_id_counts.most_common()[0][0]
+
+        return new_cluster_id
+
+
     def _generate_clusters(self):
 
         if len(self.pmc) == 0:
@@ -391,32 +418,17 @@ class DenStream(BaseEstimator):
                 # The cluster this p-micro-cluster was part of isn't actually heavy enough to be a cluster
                 pmc_clusters[pmc_idx] = -1
 
-        # If the majority of this cluster was previously part of another cluster, rename it after
-        # that other cluster so that there is continuity in the cluster IDs
+        # Find out which clusters are continuations of previous clusters and which are new
         old_id_map = {}
-        for cluster_id, member_last_ids in cluster_member_last_ids.items():
+        cluster_sizes = Counter(pmc_clusters)
+        for cluster_id, num_pmcs in cluster_sizes.most_common(): # Largest to smallest
+            member_last_ids = cluster_member_last_ids[cluster_id]
             last_id_counts = Counter(member_last_ids)
-            most_common_old = last_id_counts.most_common()[0][0]
-            if most_common_old != -1:
-                old_id_map[cluster_id] = most_common_old
+            old_id_map[cluster_id] = self._get_id_assignment(cluster_id, last_id_counts)
 
+        # Update all PMCs with the cluster ID we decided on
         for pmc_idx, cur_cluster in enumerate(pmc_clusters):
             self.pmc[pmc_idx].last_cluster_id = old_id_map.get(cur_cluster, cur_cluster)
-
-        # TODO: address this!
-        # There is an edge case where cluster A gets split up into two clusters and cluster A's core-micro-clusters
-        # form the majority in both of those new clusters. In this case, the largest of the duplicates will maintain
-        # cluster A's ID, and other clusters will get new IDs.
-        #cluster_id_uses = {}
-        #for idx, (cluster_id, _) in enumerate(clusters):
-        #    if cluster_id in cluster_id_uses:
-        #        cluster_id_uses[cluster_id].append(idx)
-        #    else:
-        #        cluster_id_uses[cluster_id] = [idx]
-
-        #print(cluster_id_uses)
-
-        # Update last cluster assignments for each core-micro-cluster
 
         logger.info(
             "Clustering Request:"
