@@ -421,6 +421,7 @@ class DenStream(BaseEstimator):
 
         # Find out which clusters are continuations of previous clusters and which are new
         old_id_map = {}
+        used_old_ids = set()
         cluster_sizes = Counter(pmc_clusters)
         for cluster_id, num_pmcs in cluster_sizes.most_common(): # Largest to smallest
             if cluster_id == -1:
@@ -428,7 +429,12 @@ class DenStream(BaseEstimator):
 
             member_last_ids = cluster_member_last_ids[cluster_id]
             last_id_counts = Counter(member_last_ids)
-            old_id_map[cluster_id] = self._get_id_assignment(cluster_id, last_id_counts)
+            id_assignment = self._get_id_assignment(cluster_id, last_id_counts)
+
+            # Want to make sure we don't multiple clusters as descendants of same ancestor
+            if id_assignment not in used_old_ids:
+                old_id_map[cluster_id] = id_assignment
+                used_old_ids.add(id_assignment)
 
         # Update all PMCs with the cluster ID we decided on
         for pmc_idx, cur_cluster in enumerate(pmc_clusters):
