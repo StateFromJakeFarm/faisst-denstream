@@ -327,9 +327,10 @@ class DenStream(BaseEstimator):
             new_cluster_id,
             last_id_counts):
 
-        if last_id_counts.most_common()[0][1] / last_id_counts.total() >= self.min_fraction_for_next_generation:
+        most_common_last_id = last_id_counts.most_common()[0][0]
+        if (most_common_last_id != -1) and (last_id_counts.most_common()[0][1] / last_id_counts.total() >= self.min_fraction_for_next_generation):
             # Passed the threshold! Consider this to be the next generation of a previous cluster
-            return last_id_counts.most_common()[0][0]
+            return most_common_last_id
 
         return new_cluster_id
 
@@ -340,7 +341,7 @@ class DenStream(BaseEstimator):
             # Can't have clusters without p-micro-clusters
             return
 
-        # Find directly-densely-connected groups of p-micro-clusters 
+        # Find directly-densely-connected groups of p-micro-clusters
         pmc_centers = np.vstack([p.center for p in self.pmc])
         index = faiss.IndexFlatL2(pmc_centers.shape[1])
         index.add(pmc_centers)
@@ -422,6 +423,9 @@ class DenStream(BaseEstimator):
         old_id_map = {}
         cluster_sizes = Counter(pmc_clusters)
         for cluster_id, num_pmcs in cluster_sizes.most_common(): # Largest to smallest
+            if cluster_id == -1:
+                continue
+
             member_last_ids = cluster_member_last_ids[cluster_id]
             last_id_counts = Counter(member_last_ids)
             old_id_map[cluster_id] = self._get_id_assignment(cluster_id, last_id_counts)
